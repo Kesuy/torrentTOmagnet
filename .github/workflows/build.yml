@@ -35,7 +35,7 @@ jobs:
           $fixture = [Text.Encoding]::UTF8.GetBytes("d4:infod4:name12:smoke & testee")
           [IO.File]::WriteAllBytes(".\dist\smoke & test.torrent", $fixture)
           $output = "" | & ".\dist\torrentTOmagnet.exe" 2>&1 | Out-String
-          if ($LASTEXITCODE -ne 0 -or $output -notmatch "找到 1 个种子文件") {
+          if ($LASTEXITCODE -ne 0 -or $output -notmatch "magnet:\?xt=urn:btih:" -or $output -notmatch "%26") {
             Write-Error "EXE auto-discovery smoke test failed:`n$output"
           }
           Remove-Item ".\dist\smoke & test.torrent"
