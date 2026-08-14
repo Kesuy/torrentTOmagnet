@@ -8,6 +8,7 @@
 - 新增 BitTorrent v2（BTMH）及 hybrid 混合种子支持。
 - 磁力链接中自动包含并正确转义 Tracker。
 - 支持 Unicode/特殊字符文件路径与一次拖入多个种子。
+- 直接运行 EXE 时，自动搜索并转换 EXE 所在目录第一层的全部 `.torrent` 文件。
 - 改用 Windows 原生 Unicode 剪贴板，不再需要 `bencodepy`、`pyperclip` 等运行依赖。
 - 右键菜单仅作用于 `.torrent` 文件，并改为当前用户安装，无需管理员权限。
-- 加入 8 项自动化回归测试与 GitHub Actions Windows EXE 构建。
+- 加入 12 项自动化回归测试与 GitHub Actions Windows EXE 构建。

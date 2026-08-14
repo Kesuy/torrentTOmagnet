@@ -31,7 +31,14 @@ jobs:
 
       - name: Smoke test executable
         shell: pwsh
-        run: '"3" | & ".\dist\torrentTOmagnet.exe"'
+        run: |
+          $fixture = [Text.Encoding]::UTF8.GetBytes("d4:infod4:name12:smoke & testee")
+          [IO.File]::WriteAllBytes(".\dist\smoke & test.torrent", $fixture)
+          $output = "" | & ".\dist\torrentTOmagnet.exe" 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $output -notmatch "找到 1 个种子文件") {
+            Write-Error "EXE auto-discovery smoke test failed:`n$output"
+          }
+          Remove-Item ".\dist\smoke & test.torrent"
 
       - name: Rename release asset
         shell: pwsh

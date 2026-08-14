@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 import os
+from pathlib import Path
 import sys
 import time
 
@@ -21,6 +22,24 @@ MENU_LABEL = "种子转磁力链接"
 REGISTRY_KEY = (
     r"Software\Classes\SystemFileAssociations\.torrent\shell\torrentTOmagnet"
 )
+
+
+def application_directory(
+    *, is_frozen: bool, executable_path: Path, source_path: Path
+) -> Path:
+    return (executable_path if is_frozen else source_path).resolve().parent
+
+
+def find_torrent_files(directory: Path) -> list[Path]:
+    """返回目录第一层中的所有 .torrent 文件，名称匹配不区分大小写。"""
+    return sorted(
+        (
+            path
+            for path in directory.iterdir()
+            if path.is_file() and path.suffix.casefold() == ".torrent"
+        ),
+        key=lambda path: (path.name.casefold(), path.name),
+    )
 
 
 def configure_console() -> None:
@@ -134,10 +153,46 @@ def process_files(paths: list[str]) -> int:
     return 0
 
 
+def process_torrents_in_directory(directory: Path, pause: bool = True) -> int | None:
+    torrent_files = find_torrent_files(directory)
+    if not torrent_files:
+        return None
+
+    print(f"在程序目录中找到 {len(torrent_files)} 个种子文件，开始自动转换。\n")
+    result = process_files([os.fspath(path) for path in torrent_files])
+    if pause and result == 0:
+        input("\n全部转换完成，按 Enter 键退出...")
+    return result
+
+
+def run(
+    arguments: list[str],
+    *,
+    is_frozen: bool,
+    executable_path: Path,
+    source_path: Path,
+    pause: bool = True,
+) -> int | None:
+    if arguments:
+        return process_files(arguments)
+    directory = application_directory(
+        is_frozen=is_frozen,
+        executable_path=executable_path,
+        source_path=source_path,
+    )
+    return process_torrents_in_directory(directory, pause=pause)
+
+
 def main() -> int:
     configure_console()
-    if len(sys.argv) > 1:
-        return process_files(sys.argv[1:])
+    result = run(
+        sys.argv[1:],
+        is_frozen=bool(getattr(sys, "frozen", False)),
+        executable_path=Path(sys.executable),
+        source_path=Path(__file__),
+    )
+    if result is not None:
+        return result
 
     print("torrentTOmagnet 2.0.0 — 种子转磁力链接")
     print("可把一个或多个 .torrent 文件拖到本程序图标上直接转换。\n")
