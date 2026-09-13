@@ -1,10 +1,38 @@
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 import tt
+
+
+class _FakeRegistryKey:
+    def __init__(self, path):
+        self.path = path
+
+    def __enter__(self):
+        return self.path
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+
+class _FakeWinreg:
+    HKEY_CURRENT_USER = "HKCU"
+    REG_SZ = 1
+
+    def __init__(self):
+        self.values = {}
+
+    def CreateKey(self, root, path):
+        self.assert_root = root
+        return _FakeRegistryKey(path)
+
+    def SetValueEx(self, key, name, reserved, value_type, value):
+        self.values[(key, name)] = (value_type, value)
 
 
 class ApplicationTests(unittest.TestCase):
@@ -33,6 +61,48 @@ class ApplicationTests(unittest.TestCase):
             result = tt.find_torrent_files(directory)
 
             self.assertEqual(result, expected)
+
+    def test_context_menu_icon_uses_embedded_exe_icon(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executable = Path(tmp) / "torrentTOmagnet.exe"
+
+            result = tt.context_menu_icon(os.fspath(executable))
+
+            self.assertEqual(result, f'"{os.path.abspath(executable)}",0')
+
+    def test_add_context_menu_sets_label_icon_and_never_default(self):
+        fake_winreg = _FakeWinreg()
+        executable = os.path.join("some folder", "torrentTOmagnet.exe")
+        absolute_executable = os.path.abspath(executable)
+
+        with (
+            patch.object(tt, "winreg", fake_winreg),
+            patch.object(tt, "notify_shell_association_changed") as notify,
+        ):
+            tt.add_context_menu(executable)
+
+        values = fake_winreg.values
+        self.assertEqual(
+            values[(tt.REGISTRY_KEY, "")],
+            (fake_winreg.REG_SZ, tt.MENU_LABEL),
+        )
+        self.assertEqual(
+            values[(tt.REGISTRY_KEY, "MUIVerb")],
+            (fake_winreg.REG_SZ, tt.MENU_LABEL),
+        )
+        self.assertEqual(
+            values[(tt.REGISTRY_KEY, "NeverDefault")],
+            (fake_winreg.REG_SZ, ""),
+        )
+        self.assertEqual(
+            values[(tt.REGISTRY_KEY, "Icon")],
+            (fake_winreg.REG_SZ, f'"{absolute_executable}",0'),
+        )
+        self.assertEqual(
+            values[(tt.REGISTRY_KEY + r"\command", "")],
+            (fake_winreg.REG_SZ, f'"{absolute_executable}" "%1"'),
+        )
+        notify.assert_called_once_with()
 
     def test_process_torrents_in_directory_converts_discovered_files(self):
         with tempfile.TemporaryDirectory() as tmp:
