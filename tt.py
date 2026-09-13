@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import time
+import uuid
 
 from torrent_to_magnet import TorrentError, torrent_to_magnet
 
@@ -22,6 +25,10 @@ MENU_LABEL = "种子转磁力链接"
 REGISTRY_KEY = (
     r"Software\Classes\SystemFileAssociations\.torrent\shell\torrentTOmagnet"
 )
+CONTEXT_MUTEX_NAME = r"Local\torrentTOmagnet-context-batch"
+CONTEXT_QUEUE_DIR_NAME = "torrentTOmagnet-context"
+CONTEXT_QUIET_SECONDS = 0.45
+CONTEXT_TIMEOUT_SECONDS = 2.0
 
 
 def application_directory(
@@ -42,8 +49,33 @@ def find_torrent_files(directory: Path) -> list[Path]:
     )
 
 
+def ensure_console() -> None:
+    """按需连接或创建控制台。
+
+    发布版使用 Windows GUI 子系统启动，这样 Explorer 为多选文件创建的辅助进程
+    不会各自闪出控制台。只有最终负责处理整批文件的进程才会调用本函数。
+    """
+    if os.name != "nt":
+        return
+
+    kernel32 = ctypes.windll.kernel32
+    if not kernel32.GetConsoleWindow():
+        attach_parent_process = 0xFFFFFFFF
+        if not kernel32.AttachConsole(attach_parent_process):
+            if not kernel32.AllocConsole():
+                raise OSError("无法创建控制台")
+
+    kernel32.SetConsoleCP(65001)
+    kernel32.SetConsoleOutputCP(65001)
+    sys.stdin = open("CONIN$", "r", encoding="utf-8", errors="replace")
+    sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+    sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+
+
 def configure_console() -> None:
     for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure:
             reconfigure(errors="replace")
@@ -105,8 +137,6 @@ def copy_to_clipboard(text: str) -> None:
 
 def context_menu_icon(executable_path: str) -> str:
     """返回 Explorer 右键菜单使用的 EXE 图标路径。"""
-    # Icon 是资源路径而不是命令行；不要额外包引号，避免 Explorer
-    # 对带空格路径和资源索引字符串的解析差异导致图标不显示。
     return os.path.abspath(executable_path)
 
 
@@ -126,19 +156,14 @@ def add_context_menu(executable_path: str) -> None:
         raise RuntimeError("右键菜单仅支持 Windows")
 
     executable_path = os.path.abspath(executable_path)
-    command = f'"{executable_path}" "%1"'
+    command = f'"{executable_path}" --context "%1"'
     icon = context_menu_icon(executable_path)
 
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
-        # 同时设置默认显示名和 MUIVerb，避免 Explorer 将自定义 verb
-        # 显示成系统生成的“打开 .torrent 文件”。
         winreg.SetValueEx(key, "", 0, winreg.REG_SZ, MENU_LABEL)
         winreg.SetValueEx(key, "MUIVerb", 0, winreg.REG_SZ, MENU_LABEL)
-        # NeverDefault 防止本工具被 Shell 选作 .torrent 的默认“打开”动作。
         winreg.SetValueEx(key, "NeverDefault", 0, winreg.REG_SZ, "")
-        # Player 模式让 Explorer 在选择多个 .torrent 文件时仍显示该菜单项。
         winreg.SetValueEx(key, "MultiSelectModel", 0, winreg.REG_SZ, "Player")
-        # 直接引用 PyInstaller EXE 自身的默认图标资源。
         winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, icon)
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY + r"\command") as key:
         winreg.SetValueEx(key, "", 0, winreg.REG_SZ, command)
@@ -157,6 +182,150 @@ def remove_context_menu() -> None:
         print(f"已删除右键菜单“{MENU_LABEL}”。")
     except FileNotFoundError:
         print("右键菜单尚未安装。")
+
+
+def context_queue_directory() -> Path:
+    return Path(tempfile.gettempdir()) / CONTEXT_QUEUE_DIR_NAME
+
+
+def enqueue_context_paths(paths: list[str], queue_dir: Path | None = None) -> Path:
+    """把本次 Explorer 调用收到的文件路径原子写入临时队列。"""
+    queue_dir = queue_dir or context_queue_directory()
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    normalized = [os.path.abspath(path) for path in paths]
+    token = f"{time.time_ns()}-{uuid.uuid4().hex}"
+    temp_path = queue_dir / f".{token}.tmp"
+    final_path = queue_dir / f"{token}.json"
+    payload = {"created": time.time(), "paths": normalized}
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    os.replace(temp_path, final_path)
+    return final_path
+
+
+def collect_queued_context_paths(
+    queue_dir: Path | None = None, *, stale_after: float = 30.0
+) -> list[str]:
+    """取出当前批次队列中的路径，并清理残留项。"""
+    queue_dir = queue_dir or context_queue_directory()
+    if not queue_dir.exists():
+        return []
+
+    now = time.time()
+    paths: list[str] = []
+    seen: set[str] = set()
+    for item in sorted(queue_dir.glob("*.json"), key=lambda path: path.name):
+        try:
+            if now - item.stat().st_mtime > stale_after:
+                continue
+            payload = json.loads(item.read_text(encoding="utf-8"))
+            for raw_path in payload.get("paths", []):
+                if not isinstance(raw_path, str):
+                    continue
+                path = os.path.abspath(raw_path)
+                key = os.path.normcase(path)
+                if key not in seen:
+                    seen.add(key)
+                    paths.append(path)
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+        finally:
+            try:
+                item.unlink()
+            except OSError:
+                pass
+    return paths
+
+
+def wait_for_context_batch(
+    queue_dir: Path | None = None,
+    *,
+    quiet_seconds: float = CONTEXT_QUIET_SECONDS,
+    timeout_seconds: float = CONTEXT_TIMEOUT_SECONDS,
+) -> list[str]:
+    """等待 Explorer 把同一次多选产生的调用全部送入队列。"""
+    queue_dir = queue_dir or context_queue_directory()
+    deadline = time.monotonic() + timeout_seconds
+    last_snapshot: tuple[str, ...] | None = None
+    quiet_since = time.monotonic()
+
+    while time.monotonic() < deadline:
+        snapshot = tuple(sorted(path.name for path in queue_dir.glob("*.json")))
+        now = time.monotonic()
+        if snapshot != last_snapshot:
+            last_snapshot = snapshot
+            quiet_since = now
+        elif now - quiet_since >= quiet_seconds:
+            break
+        time.sleep(0.05)
+
+    return collect_queued_context_paths(queue_dir)
+
+
+def acquire_context_batch_mutex():
+    """只有一个 Explorer 调用负责最终汇总并打开处理窗口。"""
+    if os.name != "nt":
+        return None, True
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+
+    ctypes.set_last_error(0)
+    handle = kernel32.CreateMutexW(None, True, CONTEXT_MUTEX_NAME)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    error_already_exists = 183
+    if ctypes.get_last_error() == error_already_exists:
+        kernel32.CloseHandle(handle)
+        return None, False
+    return (kernel32, handle), True
+
+
+def release_context_batch_mutex(mutex) -> None:
+    if mutex is None:
+        return
+    kernel32, handle = mutex
+    kernel32.ReleaseMutex(handle)
+    kernel32.CloseHandle(handle)
+
+
+def run_context_selection(paths: list[str]) -> int:
+    """把 Explorer 的多进程逐文件调用合并为一次批量处理。"""
+    if not paths:
+        return 0
+
+    queue_dir = context_queue_directory()
+    enqueue_context_paths(paths, queue_dir)
+    mutex, is_leader = acquire_context_batch_mutex()
+    if not is_leader:
+        return 0
+
+    try:
+        batch = wait_for_context_batch(queue_dir)
+    finally:
+        release_context_batch_mutex(mutex)
+
+    if not batch:
+        return 0
+
+    ensure_console()
+    configure_console()
+    return process_files(batch)
+
+
+def run_smoke_test(arguments: list[str]) -> int:
+    """供 GitHub Actions 验证 windowed EXE 的核心转换逻辑。"""
+    if len(arguments) != 2:
+        return 2
+    try:
+        magnet = torrent_to_magnet(arguments[0])
+        Path(arguments[1]).write_text(magnet, encoding="utf-8")
+    except (TorrentError, OSError):
+        return 1
+    return 0
 
 
 def process_files(paths: list[str]) -> int:
@@ -217,9 +386,25 @@ def run(
 
 
 def main() -> int:
+    arguments = sys.argv[1:]
+
+    if arguments[:1] == ["--smoke-test"]:
+        return run_smoke_test(arguments[1:])
+
+    if arguments[:1] == ["--context"]:
+        try:
+            return run_context_selection(arguments[1:])
+        except Exception as exc:
+            ensure_console()
+            configure_console()
+            print(f"右键批量处理失败：{exc}")
+            input("按 Enter 键退出...")
+            return 1
+
+    ensure_console()
     configure_console()
     result = run(
-        sys.argv[1:],
+        arguments,
         is_frozen=bool(getattr(sys, "frozen", False)),
         executable_path=Path(sys.executable),
         source_path=Path(__file__),
@@ -227,7 +412,7 @@ def main() -> int:
     if result is not None:
         return result
 
-    print("torrentTOmagnet 2.0.2 — 种子转磁力链接")
+    print("torrentTOmagnet 2.0.3 — 种子转磁力链接")
     print("可把一个或多个 .torrent 文件拖到本程序图标上直接转换。\n")
     print("1. 安装 .torrent 文件右键菜单（无需管理员权限）")
     print("2. 删除右键菜单")
