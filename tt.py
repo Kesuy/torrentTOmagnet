@@ -104,8 +104,10 @@ def copy_to_clipboard(text: str) -> None:
 
 
 def context_menu_icon(executable_path: str) -> str:
-    """返回 Explorer 右键菜单使用的 EXE 内嵌图标资源。"""
-    return f'"{os.path.abspath(executable_path)}",0'
+    """返回 Explorer 右键菜单使用的 EXE 图标路径。"""
+    # Icon 是资源路径而不是命令行；不要额外包引号，避免 Explorer
+    # 对带空格路径和资源索引字符串的解析差异导致图标不显示。
+    return os.path.abspath(executable_path)
 
 
 def notify_shell_association_changed() -> None:
@@ -134,7 +136,9 @@ def add_context_menu(executable_path: str) -> None:
         winreg.SetValueEx(key, "MUIVerb", 0, winreg.REG_SZ, MENU_LABEL)
         # NeverDefault 防止本工具被 Shell 选作 .torrent 的默认“打开”动作。
         winreg.SetValueEx(key, "NeverDefault", 0, winreg.REG_SZ, "")
-        # 使用 PyInstaller EXE 中内嵌的 icon.ico，第 0 个图标资源。
+        # Player 模式让 Explorer 在选择多个 .torrent 文件时仍显示该菜单项。
+        winreg.SetValueEx(key, "MultiSelectModel", 0, winreg.REG_SZ, "Player")
+        # 直接引用 PyInstaller EXE 自身的默认图标资源。
         winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, icon)
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY + r"\command") as key:
         winreg.SetValueEx(key, "", 0, winreg.REG_SZ, command)
@@ -223,7 +227,7 @@ def main() -> int:
     if result is not None:
         return result
 
-    print("torrentTOmagnet 2.0.1 — 种子转磁力链接")
+    print("torrentTOmagnet 2.0.2 — 种子转磁力链接")
     print("可把一个或多个 .torrent 文件拖到本程序图标上直接转换。\n")
     print("1. 安装 .torrent 文件右键菜单（无需管理员权限）")
     print("2. 删除右键菜单")
