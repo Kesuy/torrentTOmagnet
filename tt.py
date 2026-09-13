@@ -103,15 +103,43 @@ def copy_to_clipboard(text: str) -> None:
             kernel32.GlobalFree(handle)
 
 
+def context_menu_icon(executable_path: str) -> str:
+    """返回 Explorer 右键菜单使用的 EXE 内嵌图标资源。"""
+    return f'"{os.path.abspath(executable_path)}",0'
+
+
+def notify_shell_association_changed() -> None:
+    """通知 Explorer 文件关联已改变，避免继续使用旧菜单缓存。"""
+    if os.name != "nt":
+        return
+    shcne_assocchanged = 0x08000000
+    shcnf_idlist = 0x0000
+    ctypes.windll.shell32.SHChangeNotify(
+        shcne_assocchanged, shcnf_idlist, None, None
+    )
+
+
 def add_context_menu(executable_path: str) -> None:
     if winreg is None:
         raise RuntimeError("右键菜单仅支持 Windows")
+
+    executable_path = os.path.abspath(executable_path)
     command = f'"{executable_path}" "%1"'
+    icon = context_menu_icon(executable_path)
+
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
+        # 同时设置默认显示名和 MUIVerb，避免 Explorer 将自定义 verb
+        # 显示成系统生成的“打开 .torrent 文件”。
         winreg.SetValueEx(key, "", 0, winreg.REG_SZ, MENU_LABEL)
-        winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, executable_path)
+        winreg.SetValueEx(key, "MUIVerb", 0, winreg.REG_SZ, MENU_LABEL)
+        # NeverDefault 防止本工具被 Shell 选作 .torrent 的默认“打开”动作。
+        winreg.SetValueEx(key, "NeverDefault", 0, winreg.REG_SZ, "")
+        # 使用 PyInstaller EXE 中内嵌的 icon.ico，第 0 个图标资源。
+        winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, icon)
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY + r"\command") as key:
         winreg.SetValueEx(key, "", 0, winreg.REG_SZ, command)
+
+    notify_shell_association_changed()
     print(f"已添加 .torrent 文件右键菜单“{MENU_LABEL}”（无需管理员权限）。")
 
 
@@ -121,6 +149,7 @@ def remove_context_menu() -> None:
     try:
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY + r"\command")
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY)
+        notify_shell_association_changed()
         print(f"已删除右键菜单“{MENU_LABEL}”。")
     except FileNotFoundError:
         print("右键菜单尚未安装。")
