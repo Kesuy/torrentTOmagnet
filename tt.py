@@ -223,7 +223,7 @@ def main() -> int:
     if result is not None:
         return result
 
-    print("torrentTOmagnet 2.0.0 — 种子转磁力链接")
+    print("torrentTOmagnet 2.0.1 — 种子转磁力链接")
     print("可把一个或多个 .torrent 文件拖到本程序图标上直接转换。\n")
     print("1. 安装 .torrent 文件右键菜单（无需管理员权限）")
     print("2. 删除右键菜单")
