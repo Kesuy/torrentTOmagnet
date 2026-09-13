@@ -74,10 +74,12 @@ class ApplicationTests(unittest.TestCase):
         fake_winreg = _FakeWinreg()
         executable = os.path.join("some folder", "torrentTOmagnet.exe")
         absolute_executable = os.path.abspath(executable)
+        output = StringIO()
 
         with (
             patch.object(tt, "winreg", fake_winreg),
             patch.object(tt, "notify_shell_association_changed") as notify,
+            redirect_stdout(output),
         ):
             tt.add_context_menu(executable)
 
@@ -102,6 +104,7 @@ class ApplicationTests(unittest.TestCase):
             values[(tt.REGISTRY_KEY + r"\command", "")],
             (fake_winreg.REG_SZ, f'"{absolute_executable}" "%1"'),
         )
+        self.assertIn(tt.MENU_LABEL, output.getvalue())
         notify.assert_called_once_with()
 
     def test_process_torrents_in_directory_converts_discovered_files(self):
