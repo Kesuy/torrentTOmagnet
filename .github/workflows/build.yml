@@ -32,12 +32,19 @@ jobs:
         shell: pwsh
         run: |
           $fixture = [Text.Encoding]::UTF8.GetBytes("d4:infod4:name12:smoke & testee")
-          [IO.File]::WriteAllBytes(".\dist\smoke & test.torrent", $fixture)
-          $output = "" | & ".\dist\torrentTOmagnet.exe" 2>&1 | Out-String
-          if ($LASTEXITCODE -ne 0 -or $output -notmatch "magnet:\?xt=urn:btih:" -or $output -notmatch "%26") {
-            Write-Error "EXE auto-discovery smoke test failed:`n$output"
+          [IO.File]::WriteAllBytes(".\dist\smoke.torrent", $fixture)
+          $process = Start-Process `
+            -FilePath ".\dist\torrentTOmagnet.exe" `
+            -ArgumentList @("--smoke-test", ".\dist\smoke.torrent", ".\dist\smoke-output.txt") `
+            -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            Write-Error "EXE smoke test exited with $($process.ExitCode)"
           }
-          Remove-Item ".\dist\smoke & test.torrent"
+          $output = Get-Content ".\dist\smoke-output.txt" -Raw
+          if ($output -notmatch "magnet:\?xt=urn:btih:" -or $output -notmatch "%26") {
+            Write-Error "EXE conversion smoke test failed:`n$output"
+          }
+          Remove-Item ".\dist\smoke.torrent", ".\dist\smoke-output.txt"
 
       - name: Rename release asset
         shell: pwsh
