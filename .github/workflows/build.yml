@@ -3,7 +3,6 @@ name: Windows build
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
@@ -52,14 +51,21 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Release v')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${{ github.ref_name }}"
-          "dist/torrentTOmagnet-windows-x64.exe"
-          --repo "${{ github.repository }}"
-          --title "torrentTOmagnet ${{ github.ref_name }}"
-          --notes-file RELEASE_NOTES.md
-          --verify-tag
+        run: |
+          $message = @'
+          ${{ github.event.head_commit.message }}
+          '@
+          $tag = (($message -split "`r?`n")[0] -replace '^Release\s+', '').Trim()
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Invalid release tag parsed from commit message: $tag"
+          }
+          gh release create "$tag" `
+            "dist/torrentTOmagnet-windows-x64.exe" `
+            --repo "${{ github.repository }}" `
+            --title "torrentTOmagnet $tag" `
+            --notes-file RELEASE_NOTES.md `
+            --target "${{ github.sha }}"
