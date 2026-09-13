@@ -64,7 +64,7 @@ class ApplicationTests(unittest.TestCase):
             result = tt.context_menu_icon(os.fspath(executable))
             self.assertEqual(result, os.path.abspath(executable))
 
-    def test_add_context_menu_sets_label_icon_multi_select_and_never_default(self):
+    def test_add_context_menu_uses_batch_context_mode(self):
         fake_winreg = _FakeWinreg()
         executable = os.path.join("some folder", "torrentTOmagnet.exe")
         absolute_executable = os.path.abspath(executable)
@@ -85,10 +85,40 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(values[(tt.REGISTRY_KEY, "Icon")], (fake_winreg.REG_SZ, absolute_executable))
         self.assertEqual(
             values[(tt.REGISTRY_KEY + r"\command", "")],
-            (fake_winreg.REG_SZ, f'"{absolute_executable}" "%1"'),
+            (fake_winreg.REG_SZ, f'"{absolute_executable}" --context "%1"'),
         )
         self.assertIn(tt.MENU_LABEL, output.getvalue())
         notify.assert_called_once_with()
+
+    def test_context_queue_merges_multiple_invocations_and_deduplicates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            queue_dir = Path(tmp)
+            first = os.path.abspath(os.path.join(tmp, "one.torrent"))
+            second = os.path.abspath(os.path.join(tmp, "two.torrent"))
+
+            tt.enqueue_context_paths([first], queue_dir)
+            tt.enqueue_context_paths([second, first], queue_dir)
+            result = tt.collect_queued_context_paths(queue_dir)
+
+            self.assertEqual(set(result), {first, second})
+            self.assertEqual(len(result), 2)
+            self.assertEqual(list(queue_dir.glob("*.json")), [])
+
+    def test_run_smoke_test_writes_magnet_without_console(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            name = "smoke & test".encode()
+            torrent = b"d4:infod4:name" + str(len(name)).encode() + b":" + name + b"ee"
+            input_path = directory / "smoke.torrent"
+            output_path = directory / "result.txt"
+            input_path.write_bytes(torrent)
+
+            result = tt.run_smoke_test([os.fspath(input_path), os.fspath(output_path)])
+
+            self.assertEqual(result, 0)
+            magnet = output_path.read_text(encoding="utf-8")
+            self.assertIn("magnet:?xt=urn:btih:", magnet)
+            self.assertIn("%26", magnet)
 
     def test_process_torrents_in_directory_converts_discovered_files(self):
         with tempfile.TemporaryDirectory() as tmp:
