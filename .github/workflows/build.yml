@@ -2,7 +2,7 @@ name: Windows build
 
 on:
   push:
-    branches: [main]
+    branches: [main, "fix/trailing-whitespace-torrent"]
   workflow_dispatch:
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
       - name: Smoke test executable
         shell: pwsh
         run: |
-          $fixture = [Text.Encoding]::UTF8.GetBytes("d4:infod4:name12:smoke & testee")
+          $fixture = [Text.Encoding]::UTF8.GetBytes("d4:infod4:name12:smoke & testee`r`n")
           [IO.File]::WriteAllBytes(".\dist\smoke.torrent", $fixture)
           $process = Start-Process `
             -FilePath ".\dist\torrentTOmagnet.exe" `
@@ -48,13 +48,13 @@ jobs:
 
       - name: Rename release asset
         shell: pwsh
-        run: Move-Item dist/torrentTOmagnet.exe dist/torrentTOmagnet-windows-x64.exe
+        run: Move-Item dist/torrentTOmagnet.exe dist/torrentTOmagnet-trailing-whitespace-test.exe
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: torrentTOmagnet-windows-x64
-          path: dist/torrentTOmagnet-windows-x64.exe
+          path: dist/torrentTOmagnet-trailing-whitespace-test.exe
           if-no-files-found: error
 
       - name: Publish GitHub Release
