@@ -1,10 +1,10 @@
-# v2.0.3
+# v2.0.4
 
 ## 主要更新
 
-- 修复选择多个 `.torrent` 后会打开多个程序窗口的问题。
-- 右键菜单命令新增 `--context` 批处理模式：Explorer 即使按文件分别启动多个进程，也会先把路径汇总到同一个临时队列。
-- 新增 Windows 命名互斥锁，只允许一个主进程负责收集同一批选中的文件并最终执行转换。
-- 发布版改为 windowed 启动，辅助进程不会各自弹出控制台；只有最终主进程才按需创建一个控制台窗口。
-- 保留 `MultiSelectModel=Player`，继续支持多个 `.torrent` 文件同时右键。
-- 新增批处理队列去重测试，以及适配 windowed EXE 的构建 smoke test。
+- 兼容顶层 Bencode 结束后带 ASCII 空白字符的 `.torrent` 文件，包括空格、Tab、CR、LF、VT、FF。
+- 修复部分种子末尾带真实 CRLF（`0D 0A`）时误报“种子文件末尾包含多余数据”、无法转换磁力链接的问题。
+- 仍严格拒绝非空白尾随数据，避免把真正损坏或拼接额外数据的种子静默接受。
+- 保持 `info` 字典原始字节不变，不影响 BTIH / BTMH 哈希计算。
+- 新增真实 CR/LF 尾随数据回归测试，以及非空白尾随数据拒绝测试。
+- 已通过 Windows PyInstaller 打包后的 EXE 级 CRLF torrent smoke test。
