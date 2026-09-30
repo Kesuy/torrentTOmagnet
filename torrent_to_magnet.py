@@ -104,7 +104,7 @@ def _decode_torrent(data: bytes) -> tuple[dict, bytes]:
     if offset >= len(data) or data[offset : offset + 1] != b"e":
         raise TorrentError("种子文件顶层字典缺少结束符")
     trailing = data[offset + 1 :]
-    if trailing.strip(b" \\t\\r\\n\\v\\f"):
+    if trailing.strip(b" \t\r\n\v\f"):
         raise TorrentError("种子文件末尾包含多余数据")
     if info_bytes is None:
         raise TorrentError("种子文件缺少 info 字典")
