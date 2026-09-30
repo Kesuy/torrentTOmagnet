@@ -82,14 +82,14 @@ class MagnetTests(unittest.TestCase):
         data = bencode({b"info": info})
 
         self.assertEqual(
-            torrent_bytes_to_magnet(data + b"\\r\\n\\t "),
+            torrent_bytes_to_magnet(data + b"\r\n\t "),
             torrent_bytes_to_magnet(data),
         )
 
     def test_non_whitespace_trailing_data_is_rejected(self):
         data = bencode({b"info": {b"length": 1}})
         with self.assertRaisesRegex(TorrentError, "末尾包含多余数据"):
-            torrent_bytes_to_magnet(data + b"\\r\\nextra")
+            torrent_bytes_to_magnet(data + b"\r\nextra")
 
     def test_invalid_torrent_has_clear_error(self):
         with self.assertRaisesRegex(TorrentError, "缺少 info"):
